@@ -1,0 +1,8 @@
+[Unit]
+Description=BTRFS Snapshot Service Timer (%I)
+PartOf=%i.mount
+
+[Timer]
+OnUnitActiveSec=5min
+OnActiveSec=3min
+Unit=btrfs-snap@%i.service

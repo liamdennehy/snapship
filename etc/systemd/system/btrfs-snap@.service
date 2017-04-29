@@ -1,0 +1,7 @@
+[Unit]
+Description=BTRFS Snapshot Service (/%I)
+PartOf=%i.mount
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/btrfs-snap /etc/btrfs-snap.d/%i.conf

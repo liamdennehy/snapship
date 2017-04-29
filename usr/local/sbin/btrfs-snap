@@ -1,0 +1,131 @@
+#!/bin/bash
+conf="$1"
+if [ -z "$1" ]; then
+  for conf in /etc/snaps.d/*.conf; do
+    $0 "$conf"
+    done
+  exit
+  fi
+now="$(date +"%Y-%m-%d %H:%M")"
+if [ -z "$conf" ]; then
+  echo Usage: snaps [configfile]
+  exit 2
+  fi
+if [ ! -r "$conf" ]; then
+  echo Cannot read config file $1, aborting
+  exit 1
+  fi
+function getelapsed {
+  olddate="$1"
+  oldepoch=$(date -d "$olddate" +%s)
+  elapsed=$(($(date -d "$now" +%s) - $oldepoch))
+  echo $elapsed
+  }
+function snap {
+  subvol=$1
+  period=$2
+  #touch "$snapdir"/"$subvol-$period-$now"
+  /sbin/btrfs subvolume snapshot -r "$btrfsbase"/"$subvol" "$snapdir"/"$subvol-$period-$now" >/dev/null 2>/dev/null
+  }
+function getdate {
+  snap="$1"
+  len=$(echo "$snap" | wc -c)
+  olddate="$(echo "$snap" | cut -b$(($len-16))-$len)"
+  echo "$olddate"
+  }
+function rmsnap {
+  snap="$1"
+  #rm -v "$snap"
+  /sbin/btrfs subvolume delete "$snapdir"/"$snap" >/dev/null 2>/dev/null
+  }
+function getsnaps {
+  echo "$(ls 2>/dev/null |grep "$subvol"-$period |sort)"
+  }
+function getsnapcount {
+  silent=$1
+  snaplist="$(getsnaps)"
+  if [ -z "$snaplist" ]; then
+    snapcount=0
+    return 0
+  else
+    snapcount=$(echo "$snaplist" |wc -l)
+    fi
+  if [ -z "$silent" ]; then
+    # echo -n "got $snapcount snap"
+    result="$result""got $snapcount snap"
+    if [ $snapcount -gt 1 ] || [ $snapcount -eq 0 ]; then
+      # echo -n "s "
+      result="$result""s"
+      fi
+    # echo -n "of max $keep "
+    result="$result"" of max $keep "
+    fi 1>&2
+  }
+. $conf
+if [ ! -r "$btrfsbase" ] || [ -z "$btrfsbase" ]; then
+  echo Cannot read from btrfsbase \"$btrfsbase\" or variable not set, aborting
+  exit 4
+  fi
+[ ! -d $snapdir ] && mkdir -p $snapdir
+pushd "$snapdir" >/dev/null
+snapsdone=0
+for subvol in $subvols; do 
+  for period in 5min hour day month year; do
+    case $period in
+      5min)
+        max=$((5*60))
+        ;;
+      15min)
+        max=$((15*60))
+	;;
+      hour)
+        max=$((60*60))
+        ;;
+      day)
+        max=$((24*60*60))
+        ;;
+      month)
+        max=$((28*24*60*60))
+        ;;
+      year)
+        max=$((365*24*60*60))
+        ;;
+      esac
+    # echo -n "Checking $btrfsbase/$subvol $period snapshots... "
+    result="Checking $btrfsbase/$subvol $period snapshots... "
+    rmsnaps=0
+    getsnapcount silent
+    #snapcount=$(getsnapcount)
+    if [ $snapcount -eq 0 ]; then
+      # echo "first snap :)"
+      result="Result""first snap :)"
+      snap $subvol $period
+    else
+      keep=$(eval "echo \$$(echo keep${period})")
+      [ -z "$keep" ] && keep=0
+      if [ $keep -gt 0 ]; then
+        getsnapcount
+        while [ $snapcount -gt $keep ]; do
+	  rmsnap "$(getsnaps | head -n1)"
+          rmsnaps=$(($rmsnaps+1))
+	  getsnapcount silent
+	  done
+        [ $rmsnaps -gt 0 ] && result="$result""killed $rmsnaps " # echo -n "killed $rmsnaps " 
+        lastsnap=$(getsnaps |tail -n1)
+        lastsnapdate=$(date -d "$(getdate "$lastsnap")" +%s)
+        elapsed=$(($(date -d "$now" +%s) - $lastsnapdate))
+        # echo -n $elapsed"s elapsed, "
+        result="$result"$elapsed"s elapsed, "
+	if [ $elapsed -gt $(($max - 1)) ]; then
+          # echo "$period snapped"
+          result="$result""$period snapped"
+	  snap $subvol $period
+	  echo $result
+        else
+          # echo "no action"
+          result="$result""no action"
+	  fi
+        fi
+      fi
+    done
+  done

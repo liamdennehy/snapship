@@ -1,0 +1,12 @@
+CREATE TABLE hosts (host string);
+CREATE TABLE "snaps" (subvolid int, typeid int, timestamp int, started int, finished int, pid int, pidhash string);
+CREATE TABLE tvolumes (hostid int, uuid string, volmount string, label string);
+CREATE TABLE tsubvols (volumeid int, subvolname string, localid int);
+CREATE VIEW subvols as select hostid, host, volumeid, volmount, label, uuid, tsubvols.rowid subvolid, subvolname from (hosts left join tvolumes on hosts.rowid = tvolumes.hostid) left join tsubvols on tsubvols.volumeid = tvolumes.rowid;
+CREATE TABLE types (type string);
+CREATE VIEW paths as select subvolname || "-" || type || "-" || strftime('%Y-%m-%d %H:%M',timestamp,'unixepoch','localtime') snap, timestamp, subvolname, type, subvols.subvolid from ((snaps left join types on snaps.typeid = types.rowid) left join subvols on subvols.subvolid = snaps.subvolid);
+insert into types (type) values ('5min');
+insert into types (type) values ('hour');
+insert into types (type) values ('day');
+insert into types (type) values ('month');
+insert into types (type) values ('year');
