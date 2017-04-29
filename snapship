@@ -1,0 +1,29 @@
+#!/bin/bash
+keyfile=/tmp/ssh/id_rsa
+cryptbase=/mnt/Crypt
+db=/var/lib/snaps/snaps.sqlite
+usage () {
+	echo Usage:
+	echo 'getsnaps <hostname> <BTRFSVolMount> <BTRFSSubVol>'
+	exit 2
+	}
+listsnaps () {
+	cmd="cd /mnt/$btrfsvol/snaps; ls -d $subvol*"
+	ssh -i /tmp/ssh/id_rsa root@cerval.jamboni.wiemax.net "$cmd" | while read line; do
+		d="$(date -d"$(echo $line |cut -d'-' -f3-)" +%s)"
+		snaptype=$(echo $line |cut -d'-' -f1-2)
+		echo $d-$snaptype
+		done | sort
+	}
+
+getlastsnap () {
+	cmd="select snap from paths where host='$host' and volume='$btrfsvol' and subvol='$subvol' order by timestamp desc limit 1;"
+	echo \"$cmd\" \| sqlite3 $db
+	echo "$cmd" | sqlite3 $db
+	}
+
+[ ! -r /tmp/ssh/id_rsa ] && echo "Can't see an available id_rsa in /tmp/ssh" && exit 1
+[ -z "$1" ] && usage || host=$1
+[ -z "$2" ] && usage || btrfsvol=$2
+[ -z "$3" ] && usage || subvol=$3
+getlastsnap
