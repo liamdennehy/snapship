@@ -7,14 +7,29 @@ usage () {
 	echo 'getsnaps <hostname> <BTRFSVolMount> <BTRFSSubVol>'
 	exit 2
 	}
-listsnaps () {
-	cmd="cd /mnt/$btrfsvol/snaps; ls -d $subvol*"
-	ssh -i /tmp/ssh/id_rsa root@cerval.jamboni.wiemax.net "$cmd" | while read line; do
-		d="$(date -d"$(echo $line |cut -d'-' -f3-)" +%s)"
-		snaptype=$(echo $line |cut -d'-' -f1-2)
-		echo $d-$snaptype
-		done | sort
-	}
+[ ! -r /tmp/ssh/id_rsa ] && echo "Can't see an available id_rsa in /tmp/ssh" && exit 1
+[ -z "$1" ] && usage || host=$1
+[ -z "$2" ] && usage || btrfsvol=$2
+[ -z "$3" ] && usage || subvol=$3
+
+getremotesnaps () {
+  cmd='cd /mnt/'$btrfsvol'/snaps; ls -d '$subvol'-* | while read line; do d="$(date -d"$(echo $line |cut -d"-" -f3-)" +%s)"; snaptype=$(echo $line |cut -d"-" -f1-2); echo $d-$snaptype; done | sort'
+  ssh -i $keyfile root@$host "$cmd" | while read line; do
+    timestamp=$(echo $line | cut -d"-" -f1)
+    subvol=$(echo $line |cut -d"-" -f2)
+    snaptype=$(echo $line |cut -d"-" -f3)
+    dbsnapentry=$(echo "select rowid from snaps where \
+      host='$host' and subvol='$subvol' and timestamp=$timestamp;" \
+      | sqlite3 $db)
+    if [ -z "$dbsnapentry" ]; then
+      sqlcmd="insert into snaps (host, volume, subvol, type, timestamp) values \
+        ('$host','$btrfsvol','$subvol','$snaptype','$timestamp');"
+      echo $sqlcmd
+    else
+      echo $rowid $line
+      fi
+    done
+  }
 
 getlastsnap () {
 	cmd="select snap from paths where host='$host' and volume='$btrfsvol' and subvol='$subvol' order by timestamp desc limit 1;"
@@ -22,8 +37,39 @@ getlastsnap () {
 	echo "$cmd" | sqlite3 $db
 	}
 
-[ ! -r /tmp/ssh/id_rsa ] && echo "Can't see an available id_rsa in /tmp/ssh" && exit 1
-[ -z "$1" ] && usage || host=$1
-[ -z "$2" ] && usage || btrfsvol=$2
-[ -z "$3" ] && usage || subvol=$3
-getlastsnap
+gethostinfo () {
+  hostid=$(echo "select rowid from hosts where host='$host';" | sqlite3 $db)
+  if [ -z "$hostid" ]; then
+    hostid=$(echo "insert into hosts (host) values ('$host');
+      select rowid from hosts where host='$host';" | sqlite3 $db)
+    fi
+  }
+getvolinfo () {
+  volid=$(echo "select rowid from tvolumes where volmount='$btrfsvol';" | sqlite3 $db)
+  if [ -z "$volid" ]; then
+    t=$(ssh -i $keyfile root@$host "/sbin/btrfs filesystem show /mnt/"$btrfsvol | head -n1)
+    label=$(echo $t | cut -d"'" -f2)
+    uuid=$(echo $t | cut -d' ' -f4)
+    volid=$(echo "insert into tvolumes (hostid, uuid, volmount, label) values
+      ($hostid, '$uuid','$btrfsvol','$label');
+      select rowid from tvolumes where hostid=$hostid and volmount='$btrfsvol';" | sqlite3 $db) 
+    fi
+  }
+getsubvolinfo () {
+  subvolid=$(echo "select rowid from tsubvols where volumeid=$volid and subvolname='$subvol';" | sqlite3 $db)
+  if [ -z "$subvolid" ]; then
+    localid=$(ssh -i $keyfile root@$host "/sbin/btrfs subvolume list /mnt/$btrfsvol | egrep 'path subvol'$")
+    subvolid=$(echo "insert into tsubvols (volumeid, subvolname, localid) values
+      ($volid, '$subvol','$localid');
+      select rowid from tsubvols where volumeid=$volid and subvolname='$subvol';" | sqlite3 $db)
+    fi
+  }
+getsnaptypes () {
+  echo "select rowid, type from types" | sqlite3 $db | while read line; do
+    typeid[$(echo $line | cut -d'|' -f2)]=$(echo $line |cut -d'|' -f1)
+    done
+  }
+gethostinfo
+getvolinfo
+getsubvolinfo
+echo $hostid $volid $subvolid
